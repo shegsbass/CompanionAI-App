@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:chat_gpt_sdk/chat_gpt_sdk.dart';
 import 'package:companion_ai/consts.dart';
 import 'package:dash_chat_2/dash_chat_2.dart';
@@ -12,16 +14,19 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen> {
 
+  //Get an instance of OpenAI and setup HTTP
   final _openAI = OpenAI.instance.build(
     token: OPENAI_API_KEY,
     baseOption: HttpSetup(
-      receiveTimeout: const Duration(seconds: 5),
+      receiveTimeout: const Duration(seconds: 10),
     ),
     enableLog: true,
   );
 
-  final ChatUser _currentUser = ChatUser(id: '1', firstName: 'Shegs', lastName: 'AppGuy');
-  final ChatUser _gptUser = ChatUser(id: '2', firstName: 'Companion', lastName: 'AI');
+  final ChatUser _currentUser = ChatUser(
+      id: '1', firstName: 'Shegs', lastName: 'AppGuy');
+  final ChatUser _gptUser = ChatUser(
+      id: '2', firstName: 'Companion', lastName: 'AI');
 
   final List<ChatMessage> _messages = <ChatMessage>[];
   final List<ChatUser> _typingUsers = <ChatUser>[];
@@ -54,44 +59,115 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  //When the user sends a message, the getChatResponse method is invoked with the ChatMessage as a parameter.
   Future<void> getChatResponse(ChatMessage message) async {
-    setState(() {
-      _messages.insert(0, message);
-      _typingUsers.add(_gptUser);
-    });
+    try {
+      setState(() {
+        //the _messages list is updated to include the user's message
+        _messages.insert(0, message);
+        _typingUsers.add(_gptUser);
+      });
 
-    //Get messages history
-    List<Messages> _messagesHistory = _messages.reversed.map((message) {
-      if (message.user == _currentUser) {
-        return Messages(role: Role.user, content: message.text);
-      }else{
-        return Messages(role: Role.assistant, content: message.text);
-      }
-    }).toList();
-    
-    final request = ChatCompleteText(
+      //The message history is then constructed from the _messages list.
+      // Each message is converted into a Messages object
+      // with a role (user or assistant) and content.
+      List<Messages> _messagesHistory = _messages.reversed.map((message) {
+        if (message.user == _currentUser) {
+          return Messages(role: Role.user, content: message.text);
+        } else {
+          return Messages(role: Role.assistant, content: message.text);
+        }
+      }).toList();
+
+      //Then I specified the GPT model with other parameter in a request
+      final request = ChatCompleteText(
         model: GptTurbo0301ChatModel(),
         messages: _messagesHistory,
-      maxToken: 200,
-    );
+        maxToken: 200,
+      );
 
-    final response = await _openAI.onChatCompletion(request: request);
+      final response = await _openAI.onChatCompletion(request: request);
 
-    for (var element in response!.choices){
-      if (element.message != null){
-        setState(() {
-          _messages.insert(0, ChatMessage(
+      //The response from the network call is processed.
+      // For each choice in the response, if there is a message,
+      // a new ChatMessage with the GPT user and the generated content
+      // is inserted into the _messages list.
+      for (var element in response!.choices) {
+        if (element.message != null) {
+          setState(() {
+            _messages.insert(0, ChatMessage(
               user: _gptUser,
               createdAt: DateTime.now(),
-            text: element.message!.content,
-          ),
-          );
-        });
+              text: element.message!.content,
+            ),
+            );
+          });
+        }
       }
-    }
 
+      //Finally, the GPT user is removed from the
+      // _typingUsers list to indicate that the assistant has finished typing.
+      setState(() {
+        _typingUsers.remove(_gptUser);
+      });
+    } catch (e) {
+      // Check if the exception is a server error
+      if (e.toString().toLowerCase().contains('server error')) {
+        // Handle server error: Display a message to the user with details
+        showServerErrorToUser;
+      } else if (e is TimeoutException) {
+        // Handle timeout: Display a message to the user to resend the last message
+        showTimeoutErrorToUser();
+      } else {
+        // Handle other network errors
+        print("Error during network request: $e");
+        // Display a generic error message to the user
+        showErrorToUser();
+      }
+    } finally {
+      // Remove _gptUser from _typingUsers regardless of the error type
+      setState(() {
+        _typingUsers.remove(_gptUser);
+      });
+    }
+  }
+
+  void showServerErrorToUser(String serverMessage) {
     setState(() {
-      _typingUsers.remove(_gptUser);
+      _messages.insert(
+        0,
+        ChatMessage(
+          user: _gptUser,
+          createdAt: DateTime.now(),
+          text: "Not you, there's an error from my end: $serverMessage. Please try again later.",
+        ),
+      );
+    });
+  }
+
+  void showTimeoutErrorToUser() {
+    setState(() {
+      _messages.insert(
+        0,
+        ChatMessage(
+          user: _gptUser,
+          createdAt: DateTime.now(),
+          text: "Awchhh, Not now! Your request just timed out. Please resend your last message.",
+        ),
+      );
+    });
+  }
+
+  void showErrorToUser() {
+    setState(() {
+      _messages.insert(
+        0,
+        ChatMessage(
+          user: _gptUser,
+          createdAt: DateTime.now(),
+          text: "Oops, there was an error. Please check your internet connection and send last message.",
+        ),
+      );
     });
   }
 }
