@@ -1,5 +1,6 @@
 import 'dart:async';
-
+import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:chat_gpt_sdk/chat_gpt_sdk.dart';
 import 'package:companion_ai/consts.dart';
 import 'package:dash_chat_2/dash_chat_2.dart';
@@ -14,11 +15,58 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen> {
 
+  late SharedPreferences _prefs;
+
+  @override
+  void initState() {
+    super.initState();
+    _initPrefs().then((_) {
+      _loadMessages();
+    });
+  }
+
+  Future<void> _initPrefs() async {
+    _prefs = await SharedPreferences.getInstance();
+  }
+
+  // Load chat messages from SharedPreferences
+  void _loadMessages() {
+    print("Loading messages...");
+    final String messagesString = _prefs.getString('messages') ?? '[]';
+
+    if (messagesString.isNotEmpty) {
+      final List<dynamic> messagesData = jsonDecode(messagesString);
+      final List<ChatMessage> messages = messagesData
+          .map((message) => ChatMessage.fromJson(message))
+          .toList();
+
+      setState(() {
+        _messages.addAll(messages);
+      });
+    }
+  }
+
+
+  // Save chat messages to SharedPreferences
+  Future<void> _saveMessages() async {
+    print("Saving messages...");
+    final List<Map<String, dynamic>> messagesData =
+    _messages.map((message) => message.toJson()).toList();
+    final String messagesString = jsonEncode(messagesData);
+    await _prefs.setString('messages', messagesString);
+  }
+
+  @override
+  void dispose() {
+    _saveMessages(); // Save messages when the widget is disposed
+    super.dispose();
+  }
+
   //Get an instance of OpenAI and setup HTTP
   final _openAI = OpenAI.instance.build(
     token: OPENAI_API_KEY,
     baseOption: HttpSetup(
-      receiveTimeout: const Duration(seconds: 10),
+      receiveTimeout: const Duration(seconds: 20),
     ),
     enableLog: true,
   );
@@ -83,7 +131,10 @@ class _ChatScreenState extends State<ChatScreen> {
       final request = ChatCompleteText(
         model: GptTurbo0301ChatModel(),
         messages: _messagesHistory,
-        maxToken: 200,
+        maxToken: 120,
+        temperature: 1,
+        presencePenalty: 1,
+        frequencyPenalty: 1,
       );
 
       final response = await _openAI.onChatCompletion(request: request);
@@ -105,6 +156,8 @@ class _ChatScreenState extends State<ChatScreen> {
         }
       }
 
+      _saveMessages();
+
       //Finally, the GPT user is removed from the
       // _typingUsers list to indicate that the assistant has finished typing.
       setState(() {
@@ -114,7 +167,7 @@ class _ChatScreenState extends State<ChatScreen> {
       // Check if the exception is a server error
       if (e.toString().toLowerCase().contains('server error')) {
         // Handle server error: Display a message to the user with details
-        showServerErrorToUser;
+        showServerErrorToUser("There is a server error");
       } else if (e is TimeoutException) {
         // Handle timeout: Display a message to the user to resend the last message
         showTimeoutErrorToUser();
